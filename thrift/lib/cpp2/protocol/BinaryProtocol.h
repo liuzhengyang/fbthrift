@@ -54,7 +54,7 @@ class BinaryProtocolWriter {
     : out_(nullptr, 0)
     , sharing_(sharing) {}
 
-  static inline ProtocolType protocolType() {
+  static constexpr ProtocolType protocolType() {
     return ProtocolType::T_BINARY_PROTOCOL;
   }
 
@@ -99,10 +99,9 @@ class BinaryProtocolWriter {
   inline uint32_t writeI64(int64_t i64);
   inline uint32_t writeDouble(double dub);
   inline uint32_t writeFloat(float flt);
-  template <typename StrType>
-  inline uint32_t writeString(const StrType& str);
-  template <typename StrType>
-  inline uint32_t writeBinary(const StrType& str);
+  inline uint32_t writeString(folly::StringPiece str);
+  inline uint32_t writeBinary(folly::StringPiece str);
+  inline uint32_t writeBinary(folly::ByteRange str);
   inline uint32_t writeBinary(const std::unique_ptr<folly::IOBuf>& str);
   inline uint32_t writeBinary(const folly::IOBuf& str);
   inline uint32_t writeSerializedData(
@@ -135,26 +134,15 @@ class BinaryProtocolWriter {
   inline uint32_t serializedSizeI64(int64_t = 0);
   inline uint32_t serializedSizeDouble(double = 0.0);
   inline uint32_t serializedSizeFloat(float = 0);
-  template <typename StrType>
-  inline uint32_t serializedSizeString(const StrType&);
-  template <typename StrType>
-  uint32_t serializedSizeBinary(const StrType& v) {
-    return serializedSizeString(v);
-  }
+  inline uint32_t serializedSizeString(folly::StringPiece str);
+  inline uint32_t serializedSizeBinary(folly::StringPiece str);
+  inline uint32_t serializedSizeBinary(folly::ByteRange);
   inline uint32_t serializedSizeBinary(const std::unique_ptr<folly::IOBuf>& v);
   inline uint32_t serializedSizeBinary(const folly::IOBuf& v);
-  template <typename StrType>
-  uint32_t serializedSizeZCBinary(const StrType& v) {
-    return serializedSizeBinary(v);
-  }
-  uint32_t serializedSizeZCBinary(const std::unique_ptr<folly::IOBuf>& /*v*/) {
-    // size only
-    return serializedSizeI32();
-  }
-  uint32_t serializedSizeZCBinary(const folly::IOBuf& /*v*/) {
-    // size only
-    return serializedSizeI32();
-  }
+  inline uint32_t serializedSizeZCBinary(folly::StringPiece str);
+  inline uint32_t serializedSizeZCBinary(folly::ByteRange v);
+  inline uint32_t serializedSizeZCBinary(const std::unique_ptr<folly::IOBuf>&);
+  inline uint32_t serializedSizeZCBinary(const folly::IOBuf& /*v*/);
   inline uint32_t serializedSizeSerializedData(
       const std::unique_ptr<folly::IOBuf>& data);
 
@@ -191,7 +179,7 @@ class BinaryProtocolReader {
     , strict_read_(true)
     , in_(nullptr) {}
 
-  static inline ProtocolType protocolType() {
+  static constexpr ProtocolType protocolType() {
     return ProtocolType::T_BINARY_PROTOCOL;
   }
 
@@ -266,12 +254,6 @@ class BinaryProtocolReader {
   inline uint32_t readFromPositionAndAppend(Cursor& cursor,
                                             std::unique_ptr<folly::IOBuf>& ser);
 
-  // Returns the last read sequence ID.  Used in servers
-  // for backwards compatibility with thrift1.
-  int32_t getSeqId() {
-    return seqid_;
-  }
-
  protected:
   template<typename StrType>
   inline uint32_t readStringBody(StrType& str, int32_t sz);
@@ -291,8 +273,6 @@ class BinaryProtocolReader {
    * there is not enough data to read the whole struct.
    */
   Cursor in_;
-
-  int32_t seqid_;
 
   template<typename T> friend class ProtocolReaderWithRefill;
   friend class BinaryProtocolReaderWithRefill;

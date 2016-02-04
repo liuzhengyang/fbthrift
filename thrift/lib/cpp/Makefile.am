@@ -21,6 +21,7 @@ SUBDIRS = .
 
 pkgconfigdir = $(libdir)/pkgconfig
 
+if WITH_CPP
 lib_LTLIBRARIES = libthrift.la
 pkgconfig_DATA = thrift.pc
 libthrift_la_LDFLAGS = -version-info $(LT_VERSION) $(BOOST_LDFLAGS)
@@ -30,6 +31,7 @@ libthrift_la_LDFLAGS = -version-info $(LT_VERSION) $(BOOST_LDFLAGS)
 if AMX_HAVE_ZLIB
 lib_LTLIBRARIES += libthriftz.la
 pkgconfig_DATA += thrift-z.pc
+endif
 endif
 
 AM_CXXFLAGS = -Wall
@@ -188,27 +190,19 @@ include_processor_HEADERS = \
 
 include_asyncdir = $(include_thriftdir)/async
 include_async_HEADERS = \
-                     async/HHWheelTimer.h \
-                     async/Request.h \
                      async/SimpleCallback.h \
                      async/TAsyncChannel.h \
                      async/TAsyncDispatchProcessor.h \
                      async/TAsyncEventChannel.h \
                      async/TAsyncProcessor.h \
-                     async/TAsyncServerSocket.h \
                      async/TAsyncSocketFactory.h \
                      async/TAsyncSocket.h \
                      async/TAsyncSSLSocketFactory.h \
                      async/TAsyncSSLSocket.h \
-                     async/TAsyncTimeout.h \
                      async/TAsyncTransport.h \
                      async/TBinaryAsyncChannel.h \
-                     async/TDelayedDestruction.h \
-                     async/TEventBase.h \
-                     async/TEventBaseManager.h \
                      async/TEventConnection.h \
                      async/TEventFDWrapper.h \
-                     async/TEventHandler.h \
                      async/TEventJobQueue.h \
                      async/TEventServer.h \
                      async/TEventTask.h \
@@ -216,8 +210,6 @@ include_async_HEADERS = \
                      async/TFramedAsyncChannel.h \
                      async/THeaderAsyncChannel.h \
                      async/THttpAsyncChannel.h \
-                     async/TimeoutManager.h \
-                     async/TNotificationQueue.h \
                      async/TQueuingAsyncProcessor.h \
                      async/TStreamAsyncChannel.h \
                      async/TSyncToAsyncProcessor.h \

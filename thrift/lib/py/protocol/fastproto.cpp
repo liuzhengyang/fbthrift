@@ -46,11 +46,25 @@ static PyTypeObject* BytesIOType;
 #endif
 
 // Stolen from cStringIO.c and also works for Python 3
-typedef struct {
-  PyObject_HEAD
-  char *buf;
-  Py_ssize_t pos, string_size;
-} IOobject;
+
+
+#if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 5
+  /* The structure changes in https://hg.python.org/cpython/rev/2e29d54843a4.
+   * The first affected Python version is 3.5.0a1. */
+  typedef struct {
+    PyObject_HEAD
+    PyObject *buf;
+    Py_ssize_t pos, string_size;
+  } IOobject;
+  #define IOBUF(O) PyBytes_AS_STRING((O)->buf)
+#else
+  typedef struct {
+    PyObject_HEAD
+    char *buf;
+    Py_ssize_t pos, string_size;
+  } IOobject;
+  #define IOBUF(O) ((O)->buf)
+#endif
 
 #define IOOOBJECT(O) ((IOobject*)(O))
 
@@ -963,7 +977,7 @@ static std::unique_ptr<folly::IOBuf> refill(DecodeBuffer *input,
   // the underlying buffer. The protocol reader should only call refill
   // when it no longer needs its current IOBuf because the underlying
   // buffer is freed here.
-  return folly::IOBuf::wrapBuffer(ioobj->buf + ioobj->pos,
+  return folly::IOBuf::wrapBuffer(IOBUF(ioobj) + ioobj->pos,
       ioobj->string_size - ioobj->pos);
 }
 
@@ -979,7 +993,7 @@ decodeT(DecodeBuffer *input, PyObject *dec_obj, StructTypeArgs *args,
   };
   Reader reader(refiller);
   IOobject *ioobj = IOOOBJECT(input->stringiobuf);
-  auto buf = folly::IOBuf::wrapBuffer(ioobj->buf + ioobj->pos,
+  auto buf = folly::IOBuf::wrapBuffer(IOBUF(ioobj) + ioobj->pos,
         ioobj->string_size - ioobj->pos);
   reader.setInput(buf.get());
 
@@ -988,14 +1002,14 @@ decodeT(DecodeBuffer *input, PyObject *dec_obj, StructTypeArgs *args,
     ioobj = IOOOBJECT(input->stringiobuf);
     ioobj->pos += reader.totalBytesRead();
     return ret;
-  } catch (const std::runtime_error& e) {
+  } catch (const std::exception& e) {
     PyErr_SetString(PyExc_RuntimeError, e.what());
     return false;
   }
 }
 
 static PyObject*
-encode(PyObject *self, PyObject *args, PyObject *kws) {
+encode(PyObject* /*self*/, PyObject *args, PyObject *kws) {
   PyObject *enc_obj;
   PyObject *spec;
   int utf8strings = 0;
@@ -1025,7 +1039,7 @@ encode(PyObject *self, PyObject *args, PyObject *kws) {
 }
 
 static PyObject*
-decode(PyObject *self, PyObject *args, PyObject *kws) {
+decode(PyObject* /*self*/, PyObject *args, PyObject *kws) {
   PyObject *dec_obj;
   PyObject *transport;
   PyObject *spec;
@@ -1121,11 +1135,17 @@ static struct PyModuleDef ThriftFastProtoModuleDef = {
 #define INITERROR return nullptr
 
 PyObject*
+PyInit_fastproto(void);
+
+PyObject*
 PyInit_fastproto(void)
 #else
 #define INITERROR return
 #define GETSTATE(m) (&_state)
 static struct module_state _state;
+
+PyMODINIT_FUNC
+initfastproto(void);
 
 PyMODINIT_FUNC
 initfastproto(void)

@@ -119,11 +119,11 @@ class VirtualWriterBase {
   virtual uint32_t writeI64(int64_t i64) = 0;
   virtual uint32_t writeDouble(double dub) = 0;
   virtual uint32_t writeFloat(float flt) = 0;
-  virtual uint32_t writeString(const std::string& str) = 0;
-  virtual uint32_t writeString(const folly::fbstring& str) = 0;
-  virtual uint32_t writeBinary(const std::string& str) = 0;
-  virtual uint32_t writeBinary(const folly::fbstring& str) = 0;
+  virtual uint32_t writeString(folly::StringPiece str) = 0;
+  virtual uint32_t writeBinary(folly::StringPiece str) = 0;
+  virtual uint32_t writeBinary(folly::ByteRange v) = 0;
   virtual uint32_t writeBinary(const std::unique_ptr<folly::IOBuf>& str) = 0;
+  virtual uint32_t writeBinary(const folly::IOBuf& str) = 0;
 
   virtual uint32_t serializedMessageSize(const std::string& name) = 0;
   virtual uint32_t serializedFieldSize(const char* name,
@@ -148,24 +148,30 @@ class VirtualWriterBase {
   virtual uint32_t serializedSizeI64(int64_t value) = 0;
   virtual uint32_t serializedSizeDouble(double value) = 0;
   virtual uint32_t serializedSizeFloat(float value) = 0;
-  virtual uint32_t serializedSizeString(const std::string& str) = 0;
-  virtual uint32_t serializedSizeString(const folly::fbstring& str) = 0;
-  virtual uint32_t serializedSizeBinary(const std::string& v) = 0;
-  virtual uint32_t serializedSizeBinary(const folly::fbstring& v) = 0;
+  virtual uint32_t serializedSizeString(folly::StringPiece str) = 0;
+  virtual uint32_t serializedSizeBinary(folly::StringPiece str) = 0;
+  virtual uint32_t serializedSizeBinary(folly::ByteRange v) = 0;
   virtual uint32_t serializedSizeBinary(
       const std::unique_ptr<folly::IOBuf>& v) = 0;
-  virtual uint32_t serializedSizeZCBinary(const std::string& v) = 0;
-  virtual uint32_t serializedSizeZCBinary(const folly::fbstring& v) = 0;
+  virtual uint32_t serializedSizeBinary(const folly::IOBuf& v) = 0;
+  virtual uint32_t serializedSizeZCBinary(folly::StringPiece v) = 0;
+  virtual uint32_t serializedSizeZCBinary(folly::ByteRange v) = 0;
   virtual uint32_t serializedSizeZCBinary(
       const std::unique_ptr<folly::IOBuf>& v) = 0;
+  virtual uint32_t serializedSizeZCBinary(const folly::IOBuf& v) = 0;
 };
 
 std::unique_ptr<VirtualReaderBase> makeVirtualReader(ProtocolType type);
 std::unique_ptr<VirtualWriterBase> makeVirtualWriter(ProtocolType type);
 
 template <class ProtocolT>
+class VirtualWriter;
+
+template <class ProtocolT>
 class VirtualReader : public VirtualReaderBase {
  public:
+  using ProtocolWriter = VirtualWriter<typename ProtocolT::ProtocolWriter>;
+
   template <typename ...Args,
             typename std::enable_if<
               std::is_constructible<ProtocolT, Args...>::value,
@@ -256,6 +262,10 @@ class VirtualReader : public VirtualReaderBase {
 template <class ProtocolT>
 class VirtualWriter : public VirtualWriterBase {
  public:
+  using ProtocolReader = typename std::conditional<
+    std::is_same<void, typename ProtocolT::ProtocolReader>::value,
+    void, VirtualReader<typename ProtocolT::ProtocolReader>>::type;
+
   template <typename ...Args,
             typename std::enable_if<
               std::is_constructible<ProtocolT, Args...>::value,
@@ -312,19 +322,19 @@ class VirtualWriter : public VirtualWriterBase {
     return protocol_.writeDouble(dub);
   }
   uint32_t writeFloat(float flt) override { return protocol_.writeFloat(flt); }
-  uint32_t writeString(const std::string& str) override {
+  uint32_t writeString(folly::StringPiece str) override {
     return protocol_.writeString(str);
   }
-  uint32_t writeString(const folly::fbstring& str) override {
-    return protocol_.writeString(str);
-  }
-  uint32_t writeBinary(const std::string& str) override {
+  uint32_t writeBinary(folly::StringPiece str) override {
     return protocol_.writeBinary(str);
   }
-  uint32_t writeBinary(const folly::fbstring& str) override {
-    return protocol_.writeBinary(str);
+  uint32_t writeBinary(folly::ByteRange v) override {
+    return protocol_.writeBinary(v);
   }
   uint32_t writeBinary(const std::unique_ptr<folly::IOBuf>& str) override {
+    return protocol_.writeBinary(str);
+  }
+  uint32_t writeBinary(const folly::IOBuf& str) override {
     return protocol_.writeBinary(str);
   }
 
@@ -383,30 +393,33 @@ class VirtualWriter : public VirtualWriterBase {
   uint32_t serializedSizeFloat(float flt) override {
     return protocol_.serializedSizeFloat(flt);
   }
-  uint32_t serializedSizeString(const std::string& str) override {
+  uint32_t serializedSizeString(folly::StringPiece str) override {
     return protocol_.serializedSizeString(str);
   }
-  uint32_t serializedSizeString(const folly::fbstring& str) override {
-    return protocol_.serializedSizeString(str);
+  uint32_t serializedSizeBinary(folly::StringPiece str) override {
+    return protocol_.serializedSizeBinary(str);
   }
-  uint32_t serializedSizeBinary(const std::string& v) override {
-    return protocol_.serializedSizeBinary(v);
-  }
-  uint32_t serializedSizeBinary(const folly::fbstring& v) override {
+  uint32_t serializedSizeBinary(folly::ByteRange v) override {
     return protocol_.serializedSizeBinary(v);
   }
   uint32_t serializedSizeBinary(
       const std::unique_ptr<folly::IOBuf>& v) override {
     return protocol_.serializedSizeBinary(v);
   }
-  uint32_t serializedSizeZCBinary(const std::string& v) override {
+  uint32_t serializedSizeBinary(const folly::IOBuf& v) override {
+    return protocol_.serializedSizeBinary(v);
+  }
+  uint32_t serializedSizeZCBinary(folly::StringPiece v) override {
     return protocol_.serializedSizeZCBinary(v);
   }
-  uint32_t serializedSizeZCBinary(const folly::fbstring& v) override {
+  uint32_t serializedSizeZCBinary(folly::ByteRange v) override {
     return protocol_.serializedSizeZCBinary(v);
   }
   uint32_t serializedSizeZCBinary(
       const std::unique_ptr<folly::IOBuf>& v) override {
+    return protocol_.serializedSizeZCBinary(v);
+  }
+  uint32_t serializedSizeZCBinary(const folly::IOBuf& v) override {
     return protocol_.serializedSizeZCBinary(v);
   }
  private:

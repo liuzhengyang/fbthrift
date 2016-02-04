@@ -23,6 +23,7 @@
 #include <thrift/lib/cpp2/protocol/Protocol.h>
 #include <thrift/lib/cpp2/protocol/CompactProtocol.h>
 #include <thrift/lib/cpp2/protocol/BinaryProtocol.h>
+#include <thrift/lib/cpp2/protocol/JSONProtocol.h>
 #include <thrift/lib/cpp2/protocol/SimpleJSONProtocol.h>
 #include <thrift/lib/cpp/TApplicationException.h>
 #include <folly/io/IOBuf.h>
@@ -32,7 +33,7 @@ namespace apache { namespace thrift {
 template <typename Reader, typename Writer>
 struct Serializer {
   template <class T>
-  static void deserialize(
+  static uint32_t deserialize(
       const folly::IOBuf* buf, T& obj,
       ExternalBufferSharing sharing = COPY_EXTERNAL_BUFFER) {
     Reader reader(sharing);
@@ -40,22 +41,44 @@ struct Serializer {
 
     // This can be obj.read(&reader);
     // if you don't need to support thrift1-compatibility types
-    apache::thrift::Cpp2Ops<T>::read(&reader, &obj);
+    return apache::thrift::Cpp2Ops<T>::read(&reader, &obj);
   }
 
   template <class T>
-  static void deserialize(
+  static uint32_t deserialize(
       folly::ByteRange range, T& obj,
       ExternalBufferSharing sharing = COPY_EXTERNAL_BUFFER) {
     folly::IOBuf buf(folly::IOBuf::WRAP_BUFFER, range);
-    deserialize(&buf, obj, sharing);
+    return deserialize(&buf, obj, sharing);
   }
 
   template <class T>
-  static void deserialize(
+  static uint32_t deserialize(
       folly::StringPiece range, T& obj,
       ExternalBufferSharing sharing = COPY_EXTERNAL_BUFFER) {
-    deserialize(folly::ByteRange(range), obj, sharing);
+    return deserialize(folly::ByteRange(range), obj, sharing);
+  }
+
+  template <class T>
+  static T deserialize(
+      const folly::IOBuf* buf, uint32_t* size = nullptr) {
+    return returning<T>([&](T& obj) { set(size, deserialize(buf, obj)); });
+  }
+
+  template <class T>
+  static T deserialize(
+      folly::ByteRange range, uint32_t* size = nullptr,
+      ExternalBufferSharing sharing = COPY_EXTERNAL_BUFFER) {
+    return returning<T>([&](T& obj) {
+        set(size, deserialize(range, obj, sharing));
+    });
+  }
+
+  template <class T>
+  static T deserialize(
+      folly::StringPiece range, uint32_t* size = nullptr,
+      ExternalBufferSharing sharing = COPY_EXTERNAL_BUFFER) {
+    return deserialize<T>(folly::ByteRange(range), size, sharing);
   }
 
   template <class T>
@@ -79,13 +102,36 @@ struct Serializer {
     queue.appendToString(*out);
   }
 
+  template <class R, class T, typename... Args>
+  static R serialize(const T& obj, Args&&... args) {
+    R _return;
+    serialize(obj, &_return, std::forward<Args>(args)...);
+    return _return;
+  }
+
  private:
+
+  template <typename T>
+  static void set(T* t, T&& v) {
+    if (t != nullptr) {
+      *t = std::forward<T>(v);
+    }
+  }
+
+  template <typename R, typename F>
+  static R returning(F&& f) {
+    R _return;
+    f(_return);
+    return _return;
+  }
 };
 
 typedef Serializer<CompactProtocolReader, CompactProtocolWriter>
   CompactSerializer;
 typedef Serializer<BinaryProtocolReader, BinaryProtocolWriter>
   BinarySerializer;
+typedef Serializer<JSONProtocolReader, JSONProtocolWriter>
+  JSONSerializer;
 typedef Serializer<SimpleJSONProtocolReader, SimpleJSONProtocolWriter>
   SimpleJSONSerializer;
 
@@ -112,8 +158,28 @@ std::unique_ptr<folly::IOBuf> serializeErrorProtocol(
   return queue.move();
 }
 
+template<typename ProtOut>
+std::unique_ptr<folly::IOBuf> serializeErrorProtocol(
+    TApplicationException obj, const std::string& fname, int32_t protoSeqId) {
+  ProtOut prot;
+  size_t bufSize = obj.serializedSizeZC(&prot);
+  bufSize += prot.serializedMessageSize(fname);
+  folly::IOBufQueue queue;
+  prot.setOutput(&queue, bufSize);
+  prot.writeMessageBegin(fname,
+                         apache::thrift::T_EXCEPTION, protoSeqId);
+  obj.write(&prot);
+  prot.writeMessageEnd();
+  return queue.move();
+}
+
 std::unique_ptr<folly::IOBuf> serializeError(
   int protId, TApplicationException obj, folly::IOBuf* buf);
+
+std::unique_ptr<folly::IOBuf> serializeError(int protId,
+                                             TApplicationException obj,
+                                             const std::string& fname,
+                                             int32_t protoSeqId);
 
 }} // namespace apache::thrift
 #endif

@@ -20,8 +20,8 @@
 
 #include <thrift/lib/cpp2/protocol/BinaryProtocol.h>
 
-#include "thrift/test/gen-cpp2/SerializedFieldsTest_types.h"
-#include "thrift/test/gen-cpp2/SerializedFieldsTest_constants.h"
+#include <thrift/test/gen-cpp2/SerializedFieldsTest_types.h>
+#include <thrift/test/gen-cpp2/SerializedFieldsTest_constants.h>
 
 #include <gtest/gtest.h>
 
@@ -30,9 +30,9 @@ using namespace apache::thrift;
 using namespace std;
 
 const MetaStruct& kTestMetaStruct =
-    SerializedFieldsTest_constants_codemod::kTestMetaStruct();
+    SerializedFieldsTest_constants::kTestMetaStruct();
 const ProxyUnknownStruct& kTestProxyUnknownStruct =
-    SerializedFieldsTest_constants_codemod::kTestProxyUnknownStruct();
+    SerializedFieldsTest_constants::kTestProxyUnknownStruct();
 
 template<typename T>
 string easySerialize(const T& a) {

@@ -356,16 +356,38 @@ TEST(Frozen, VectorInt) {
 }
 
 TEST(Frozen, RelativePtr) {
-  RelativePtr<int> rptr;
-  int after;
+  struct {
+    RelativePtr<int> rptr;
+    int after;
+  } locals;
 
-  CHECK_LT((void*)&rptr, (void*)&after);
-  rptr.reset(&after);
-  EXPECT_EQ(rptr.get(), &after);   // basics
-  rptr.reset(&after - 8 + (1 << 30)); // within 4GB = okay
+  CHECK_LT((void*)&locals.rptr, (void*)&locals.after);
+
+  locals.rptr.reset(&locals.after);
+  EXPECT_EQ(locals.rptr.get(), &locals.after);      // basics
+  locals.rptr.reset(&locals.after - 8 + (1 << 30)); // within 4GB = okay
 
   // pointing to lower addresses = underflow
-  EXPECT_DEATH(rptr.reset(&after - 8), "address");
+  EXPECT_DEATH(locals.rptr.reset(&locals.after - 4), "address");
   // pointing to addresses more than 4GB away = overflow
-  EXPECT_DEATH(rptr.reset(&after + (1 << 30)), "address");
+  EXPECT_DEATH(locals.rptr.reset(&locals.after + (1 << 30)), "address");
+}
+
+TEST(Frozen, Utf8StringMap) {
+  map<string, int> tmap {
+    { u8"anxiety", 1 },
+    { u8"a\u00F1onuevo", 2 },
+    { u8"aot", 3 },
+    { u8"bacon", 4 },
+  };
+  auto pfmap = freeze(tmap);
+  auto& fmap = *pfmap;
+  EXPECT_NE(fmap.find(u8"anxiety"), fmap.end());
+  EXPECT_NE(fmap.find(u8"a\u00F1onuevo"), fmap.end());
+  EXPECT_NE(fmap.find(u8"aot"), fmap.end());
+  EXPECT_NE(fmap.find(u8"bacon"), fmap.end());
+  EXPECT_EQ(fmap.at(u8"anxiety"), 1);
+  EXPECT_EQ(fmap.at(u8"a\u00F1onuevo"), 2);
+  EXPECT_EQ(fmap.at(u8"aot"), 3);
+  EXPECT_EQ(fmap.at(u8"bacon"), 4);
 }

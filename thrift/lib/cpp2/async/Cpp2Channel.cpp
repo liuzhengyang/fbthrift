@@ -30,7 +30,7 @@ using folly::IOBuf;
 using folly::IOBufQueue;
 using namespace folly::io;
 using namespace apache::thrift::transport;
-using apache::thrift::async::TEventBase;
+using folly::EventBase;
 using namespace apache::thrift::concurrency;
 using apache::thrift::async::TAsyncTransport;
 
@@ -39,23 +39,31 @@ namespace apache { namespace thrift {
 Cpp2Channel::Cpp2Channel(
   const std::shared_ptr<TAsyncTransport>& transport,
   std::unique_ptr<FramingHandler> framingHandler,
-  std::unique_ptr<ProtectionHandler> protectionHandler)
+  std::unique_ptr<ProtectionHandler> protectionHandler,
+  std::unique_ptr<SaslNegotiationHandler> saslNegotiationHandler)
     : transport_(transport)
     , queue_(new IOBufQueue(IOBufQueue::cacheChainLength()))
     , recvCallback_(nullptr)
     , eofInvoked_(false)
     , protectionHandler_(std::move(protectionHandler))
-    , framingHandler_(std::move(framingHandler)) {
+    , framingHandler_(std::move(framingHandler))
+    , saslNegotiationHandler_(std::move(saslNegotiationHandler)) {
   if (!protectionHandler_) {
     protectionHandler_.reset(new ProtectionHandler);
   }
   framingHandler_->setProtectionHandler(protectionHandler_.get());
-  pipeline_.reset(new Pipeline(
+
+  if (!saslNegotiationHandler_) {
+    saslNegotiationHandler_ = folly::make_unique<DummySaslNegotiationHandler>();
+  }
+  saslNegotiationHandler_->setProtectionHandler(protectionHandler_.get());
+  pipeline_ = Pipeline::create(
       TAsyncTransportHandler(transport),
       wangle::OutputBufferingHandler(),
       protectionHandler_,
       framingHandler_,
-      this));
+      saslNegotiationHandler_,
+      this);
   // Let the pipeline know that this handler owns the pipeline itself.
   // The pipeline will then avoid destruction order issues.
   // CHECK that this operation is successful.
@@ -96,7 +104,7 @@ void Cpp2Channel::destroy() {
 }
 
 void Cpp2Channel::attachEventBase(
-  TEventBase* eventBase) {
+  EventBase* eventBase) {
   transportHandler_->attachEventBase(eventBase);
 }
 
@@ -104,7 +112,7 @@ void Cpp2Channel::detachEventBase() {
   transportHandler_->detachEventBase();
 }
 
-TEventBase* Cpp2Channel::getEventBase() {
+EventBase* Cpp2Channel::getEventBase() {
   return transport_->getEventBase();
 }
 

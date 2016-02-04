@@ -21,6 +21,7 @@
 #include <map>
 #include <vector>
 
+#include <folly/Optional.h>
 #include <thrift/lib/cpp/protocol/TProtocolTypes.h>
 #include <thrift/lib/cpp/concurrency/Thread.h>
 
@@ -43,6 +44,7 @@ enum CLIENT_TYPE {
   THRIFT_HEADER_SASL_CLIENT_TYPE = 6,
   THRIFT_HTTP_GET_CLIENT_TYPE = 7,
   THRIFT_UNKNOWN_CLIENT_TYPE = 8,
+  THRIFT_UNFRAMED_COMPACT_DEPRECATED = 9,
 };
 
 // These appear on the wire.
@@ -50,6 +52,7 @@ enum HEADER_FLAGS {
   HEADER_FLAG_SUPPORT_OUT_OF_ORDER = 0x01,
   // Set for reverse messages (server->client requests, client->server replies)
   HEADER_FLAG_DUPLEX_REVERSE = 0x08,
+  HEADER_FLAG_SASL = 0x10,
 };
 
 namespace folly {
@@ -70,7 +73,7 @@ using apache::thrift::protocol::T_BINARY_PROTOCOL;
  * Class that will take an IOBuf and wrap it in some thrift headers.
  * see thrift/doc/HeaderFormat.txt for details.
  *
- * Supports transforms: zlib snappy hmac qlz
+ * Supports transforms: zlib snappy qlz
  * Supports headers: http-style key/value per request and per connection
  * other: Protocol Id and seq ID in header.
  *
@@ -83,7 +86,11 @@ class THeader {
 
   virtual ~THeader();
 
-  THeader();
+  enum {
+    ALLOW_BIG_FRAMES = 1 << 0,
+  };
+
+  explicit THeader(int options = 0);
 
   virtual void setClientType(CLIENT_TYPE ct) { this->clientType = ct; }
   // Force using specified client type when using legacy client types
@@ -140,14 +147,15 @@ class THeader {
   static std::unique_ptr<folly::IOBuf> transform(
     std::unique_ptr<folly::IOBuf>,
     std::vector<uint16_t>& writeTrans,
-    uint32_t minCompressBytes);
+    size_t minCompressBytes);
+
+  /**
+   * Clone a new THeader. Metadata is copied, but not headers.
+   */
+  std::unique_ptr<THeader> clone();
 
   uint16_t getNumTransforms(std::vector<uint16_t>& transforms) const {
-    int trans = transforms.size();
-    if (macCallback_) {
-      trans += 1;
-    }
-    return trans;
+    return transforms.size();
   }
 
   void setTransform(uint16_t transId) {
@@ -167,9 +175,13 @@ class THeader {
 
   // these work with write headers
   void setHeader(const std::string& key, const std::string& value);
+  void setHeader(const char* key, size_t keyLength, const char* value,
+                 size_t valueLength);
   void setHeaders(StringToStringMap&&);
   void clearHeaders();
-  StringToStringMap& getWriteHeaders() { return writeHeaders_; }
+  bool isWriteHeadersEmpty() {
+    return writeHeaders_.empty();
+  }
 
   StringToStringMap&& releaseWriteHeaders() {
     return std::move(writeHeaders_);
@@ -199,34 +211,10 @@ class THeader {
   enum TRANSFORMS {
     NONE = 0x0,
     ZLIB_TRANSFORM = 0x01,
-    HMAC_TRANSFORM = 0x02,
+    HMAC_TRANSFORM = 0x02, // Deprecated and no longer supported
     SNAPPY_TRANSFORM = 0x03,
     QLZ_TRANSFORM = 0x04,
   };
-
-  /**
-   * Callbacks to get and verify a mac transform.
-
-   * If a mac callback is provided, it will be called with the outgoing packet,
-   * with the returned string appended at the end of the data.
-   *
-   * If a verify callback is provided, all incoming packets will be called with
-   * their mac data and packet data to verify.  If false is returned, an
-   * exception is thrown. Packets without any mac also throw an exception if a
-   * verify function is provided.
-   *
-   * If no verify callback is provided, and an incoming packet contains a mac,
-   * the mac is ignored.
-   *
-   **/
-  typedef std::function<std::string(const std::string&)> MacCallback;
-  typedef std::function<
-    bool(const std::string&, const std::string)> VerifyMacCallback;
-
-  void setHmac(MacCallback macCb, VerifyMacCallback verifyCb) {
-    macCallback_ = macCb;
-    verifyCallback_ = verifyCb;
-  }
 
   /* IOBuf interface */
 
@@ -280,6 +268,8 @@ class THeader {
   void setHttpClientParser(
       std::shared_ptr<apache::thrift::util::THttpClientParser>);
 
+  static CLIENT_TYPE getClientType(uint32_t f, uint32_t s);
+
   // 0 and 16th bits must be 0 to differentiate from framed & unframed
   static const uint32_t HEADER_MAGIC = 0x0FFF0000;
   static const uint32_t HEADER_MASK = 0xFFFF0000;
@@ -288,12 +278,28 @@ class THeader {
   static const uint32_t HTTP_CLIENT_MAGIC = 0x48545450; // HTTP
   static const uint32_t HTTP_GET_CLIENT_MAGIC = 0x47455420; // GET
   static const uint32_t HTTP_HEAD_CLIENT_MAGIC = 0x48454144; // HEAD
+  static const uint32_t BIG_FRAME_MAGIC = 0x42494746;  // BIGF
 
   static const uint32_t MAX_FRAME_SIZE = 0x3FFFFFFF;
   static const std::string PRIORITY_HEADER;
   static const std::string CLIENT_TIMEOUT_HEADER;
 
  protected:
+  bool isFramed(CLIENT_TYPE clientType);
+
+  // Use first 64 bits to determine client protocol
+  static folly::Optional<CLIENT_TYPE> analyzeFirst32bit(uint32_t w);
+  static CLIENT_TYPE analyzeSecond32bit(uint32_t w);
+
+  // Calls appropriate method based on client type
+  // returns nullptr if Header of Unknown type
+  std::unique_ptr<folly::IOBuf> removeNonHeader(folly::IOBufQueue* queue,
+                                                size_t& needed,
+                                                CLIENT_TYPE clientType,
+                                                uint32_t sz);
+
+  template<template <class BaseProt> class ProtocolClass,
+           protocol::PROTOCOL_TYPES ProtocolID>
   std::unique_ptr<folly::IOBuf> removeUnframed(folly::IOBufQueue* queue,
                                                size_t& needed);
   std::unique_ptr<folly::IOBuf> removeHttpServer(folly::IOBufQueue* queue);
@@ -333,10 +339,8 @@ class THeader {
 
   static std::string s_identity;
 
-  MacCallback macCallback_;
-  VerifyMacCallback verifyCallback_;
-
   uint32_t minCompressBytes_;
+  bool allowBigFrames_;
 
   /**
    * Returns the maximum number of bytes that write k/v headers can take
@@ -348,7 +352,7 @@ class THeader {
    * Returns whether the 1st byte of the protocol payload should be hadled
    * as compact framed.
    */
-  bool compactFramed(uint32_t magic);
+  static bool compactFramed(uint32_t magic);
 
   struct infoIdType {
     enum idType {

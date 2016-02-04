@@ -17,7 +17,7 @@
  * under the License.
  */
 
-#include "thrift/compiler/generate/t_java_generator.h"
+#include <thrift/compiler/generate/t_java_generator.h>
 
 #include <sstream>
 #include <string>
@@ -29,7 +29,7 @@
 #include <sys/stat.h>
 #include <stdexcept>
 
-#include "thrift/compiler/platform.h"
+#include <thrift/compiler/platform.h>
 using namespace std;
 
 
@@ -157,7 +157,7 @@ void t_java_generator::close_generator() {}
  *
  * @param ttypedef The type definition
  */
-void t_java_generator::generate_typedef(t_typedef* ttypedef) {}
+void t_java_generator::generate_typedef(t_typedef* /*ttypedef*/) {}
 
 /**
  * Enums are a class with a set of static constants.
@@ -178,6 +178,7 @@ void t_java_generator::generate_enum(t_enum* tenum) {
 
   // Add java imports
   f_enum << string() +
+    "import java.lang.reflect.*;\n" +
     "import java.util.Set;\n" +
     "import java.util.HashSet;\n" +
     "import java.util.Collections;\n" +
@@ -201,43 +202,32 @@ void t_java_generator::generate_enum(t_enum* tenum) {
       " = " << value << ";" << endl;
   }
 
-  // Create a static Set with all valid values for this enum
   f_enum << endl;
-  indent(f_enum) << "public static final IntRangeSet VALID_VALUES = new IntRangeSet(";
-  indent_up();
-  bool first = true;
-  for (c_iter = constants.begin(); c_iter != constants.end(); ++c_iter) {
-    // populate set
-    f_enum << (first ? "" : ", ") << endl;
-    first = false;
-    indent(f_enum) << (*c_iter)->get_name();
-  }
-  f_enum << " );" << endl << endl;
-  indent_down();
 
-  bool skip_name_map =
-    // Some enums are really, really huge, with enough values that the code to
-    // build VALUES_TO_NAMES (the constructor for the anonymous HashMap
-    // subclass) is too big to fit in a single method, which causes javac
-    // errors. We provide an option to skip the VALUES_TO_NAMES map for such
-    // enums. A better long-term solution would be to split the constructor
-    // into multiple methods; a better still long-term solution would be to
-    // build the map with reflection.
-    tenum->annotations_.find("skip_java_name_map") != tenum->annotations_.end();
-
-  if (!skip_name_map) {
-    indent(f_enum) <<
-      "@SuppressWarnings(\"serial\")" << endl <<
-      "public static final Map<Integer, String> VALUES_TO_NAMES = new HashMap<Integer, String>() {{" << endl;
-
-    indent_up();
-    for (c_iter = constants.begin(); c_iter != constants.end(); ++c_iter) {
-      indent(f_enum) << "put(" << (*c_iter)->get_name() << ", \"" << (*c_iter)->get_name() <<"\");" << endl;
-    }
-    indent_down();
-
-    indent(f_enum) << "}};" << endl;
-  }
+  f_enum
+    << indent() << "public static final IntRangeSet VALID_VALUES;" << endl
+    << indent() << "public static final Map<Integer, String> VALUES_TO_NAMES = new HashMap<Integer, String>();" << endl
+    << endl
+    << indent() << "static {" << endl
+    << indent() << "  try {" << endl
+    << indent() << "    Class<?> klass = " << tenum->get_name() << ".class;" << endl
+    << indent() << "    for (Field f : klass.getDeclaredFields()) {" << endl
+    << indent() << "      if (f.getType() == Integer.TYPE) {" << endl
+    << indent() << "        VALUES_TO_NAMES.put(f.getInt(null), f.getName());" << endl
+    << indent() << "      }" << endl
+    << indent() << "    }" << endl
+    << indent() << "  } catch (ReflectiveOperationException e) {" << endl
+    << indent() << "    throw new AssertionError(e);" << endl
+    << indent() << "  }" << endl
+    << endl
+    << indent() << "  int[] values = new int[VALUES_TO_NAMES.size()];" << endl
+    << indent() << "  int i = 0;" << endl
+    << indent() << "  for (Integer v : VALUES_TO_NAMES.keySet()) {" << endl
+    << indent() << "    values[i++] = v;" << endl
+    << indent() << "  }" << endl
+    << endl
+    << indent() << "  VALID_VALUES = new IntRangeSet(values);" << endl
+    << indent() << "}" << endl;
 
   scope_down(f_enum);
 
@@ -306,8 +296,8 @@ void t_java_generator::print_const_value(std::ostream& out, string name,
   } else if (type->is_struct() || type->is_xception()) {
     const vector<t_field*>& fields = ((t_struct*)type)->get_members();
     vector<t_field*>::const_iterator f_iter;
-    const map<t_const_value*, t_const_value*>& val = value->get_map();
-    map<t_const_value*, t_const_value*>::const_iterator v_iter;
+    const vector<pair<t_const_value*, t_const_value*>>& val = value->get_map();
+    vector<pair<t_const_value*, t_const_value*>>::const_iterator v_iter;
     out << name << " = new " << type_name(type, false, true) << "();" << endl;
     if (!in_static) {
       indent(out) << "static {" << endl;
@@ -341,8 +331,8 @@ void t_java_generator::print_const_value(std::ostream& out, string name,
     }
     t_type* ktype = ((t_map*)type)->get_key_type();
     t_type* vtype = ((t_map*)type)->get_val_type();
-    const map<t_const_value*, t_const_value*>& val = value->get_map();
-    map<t_const_value*, t_const_value*>::const_iterator v_iter;
+    const vector<pair<t_const_value*, t_const_value*>>& val = value->get_map();
+    vector<pair<t_const_value*, t_const_value*>>::const_iterator v_iter;
     for (v_iter = val.begin(); v_iter != val.end(); ++v_iter) {
       string key = render_const_value(out, name, ktype, v_iter->first);
       string val = render_const_value(out, name, vtype, v_iter->second);
@@ -381,7 +371,7 @@ void t_java_generator::print_const_value(std::ostream& out, string name,
   }
 }
 
-string t_java_generator::render_const_value(ostream& out, string name,
+string t_java_generator::render_const_value(ostream& out, string /*name*/,
     t_type* type, t_const_value* value) {
   type = get_true_type(type);
   std::ostringstream render;
@@ -844,7 +834,8 @@ void t_java_generator::generate_get_field_desc(ofstream& out, t_struct* tstruct)
   indent(out) << "}" << endl;
 }
 
-void t_java_generator::generate_get_struct_desc(ofstream& out, t_struct* tstruct) {
+void t_java_generator::generate_get_struct_desc(ofstream& out,
+                                                t_struct* /*tstruct*/) {
   indent(out) << "@Override" << endl;
   indent(out) << "protected TStruct getStructDesc() {" << endl;
   indent(out) << "  return STRUCT_DESC;" << endl;
@@ -881,7 +872,8 @@ void t_java_generator::generate_union_comparisons(ofstream& out, t_struct* tstru
   }
 }
 
-void t_java_generator::generate_union_hashcode(ofstream& out, t_struct* tstruct) {
+void t_java_generator::generate_union_hashcode(ofstream& out,
+                                               t_struct* /*tstruct*/) {
   if (gen_hash_code_) {
     indent(out) << "@Override" << endl;
     indent(out) << "public int hashCode() {" << endl;
@@ -1777,7 +1769,7 @@ void t_java_generator::generate_java_bean_boilerplate(ofstream& out,
 
 
 void t_java_generator::generate_default_toString(ofstream& out,
-    t_struct* tstruct) {
+    t_struct* /*tstruct*/) {
   out << indent() << "@Override" << endl <<
     indent() << "public String toString() {" << endl;
   indent_up();
@@ -2728,6 +2720,8 @@ void t_java_generator::generate_process_function(t_service* tservice,
   }
 
   if (!tfunction->is_oneway() && xceptions.size() > 0) {
+    string pservice_func_name = "\"" + tservice->get_name() + "." + tfunction->get_name() + "\"";
+    string pservice_func_name_error = tservice->get_name() + "." + tfunction->get_name();
     indent_down();
     f_service_ << indent() << "}";
     for (x_iter = xceptions.begin(); x_iter != xceptions.end(); ++x_iter) {
@@ -2735,7 +2729,10 @@ void t_java_generator::generate_process_function(t_service* tservice,
       if (!tfunction->is_oneway()) {
         indent_up();
         f_service_ <<
-          indent() << "result." << (*x_iter)->get_name() << " = " << (*x_iter)->get_name() << ";" << endl;
+          indent() << "result." << (*x_iter)->get_name() << " = " << (*x_iter)->get_name() << ";" << endl <<
+          indent() << "event_handler_.declaredUserException(handler_ctx, "
+                   << pservice_func_name << ", "
+                   << (*x_iter)->get_name() << ");" << endl;
         indent_down();
         f_service_ << indent() << "}";
       } else {
@@ -2744,16 +2741,14 @@ void t_java_generator::generate_process_function(t_service* tservice,
     }
     f_service_ << " catch (Throwable th) {" << endl;
     indent_up();
-    string pservice_func_name = "\"" + tservice->get_name() + "." + tfunction->get_name() + "\"";
-    string pservice_func_name_error = tservice->get_name() + "." + tfunction->get_name();
     f_service_ <<
       indent() << "LOGGER.error(\"Internal error processing " << pservice_func_name_error << "\", th);" << endl <<
-      indent() << "event_handler_.handlerError(handler_ctx, \""
-               << pservice_func_name_error << "\", th);" << endl <<
+      indent() << "event_handler_.handlerError(handler_ctx, "
+               << pservice_func_name << ", th);" << endl <<
       indent() << "TApplicationException x = new TApplicationException(TApplicationException.INTERNAL_ERROR, \"Internal error processing " << pservice_func_name_error << "\");" << endl <<
       indent() << "event_handler_.preWrite(handler_ctx, \""
                << pservice_func_name_error << "\", null);" << endl <<
-      indent() << "oprot.writeMessageBegin(new TMessage(\"" << pservice_func_name_error << "\", TMessageType.EXCEPTION, seqid));" << endl <<
+      indent() << "oprot.writeMessageBegin(new TMessage(" << pservice_func_name << ", TMessageType.EXCEPTION, seqid));" << endl <<
       indent() << "x.write(oprot);" << endl <<
       indent() << "oprot.writeMessageEnd();" << endl <<
       indent() << "oprot.getTransport().flush();" << endl <<
@@ -3124,7 +3119,7 @@ void t_java_generator::generate_serialize_field(ofstream& out,
  * @param prefix  String prefix to attach to all fields
  */
 void t_java_generator::generate_serialize_struct(ofstream& out,
-                                                 t_struct* tstruct,
+                                                 t_struct* /*tstruct*/,
                                                  string prefix) {
   out <<
     indent() << prefix << ".write(oprot);" << endl;
@@ -3213,7 +3208,7 @@ void t_java_generator::generate_serialize_container(ofstream& out,
 void t_java_generator::generate_serialize_map_element(ofstream& out,
                                                       t_map* tmap,
                                                       string iter,
-                                                      string map) {
+                                                      string /*map*/) {
   t_field kfield(tmap->get_key_type(), iter + ".getKey()");
   generate_serialize_field(out, &kfield, "");
   t_field vfield(tmap->get_val_type(), iter + ".getValue()");
@@ -3416,7 +3411,11 @@ string t_java_generator::function_signature_async(t_function* tfunction, string 
   return result;
 }
 
-string t_java_generator::async_function_call_arglist(t_function* tfunc, string result_handler_symbol, bool use_base_method, bool include_types) {
+string t_java_generator::async_function_call_arglist(
+    t_function* tfunc,
+    string result_handler_symbol,
+    bool /*use_base_method*/,
+    bool include_types) {
   std::string arglist = "";
   if (tfunc->get_arglist()->get_members().size() > 0) {
     arglist = argument_list(tfunc->get_arglist(), include_types) + ", ";
@@ -3453,7 +3452,11 @@ string t_java_generator::argument_list(t_struct* tstruct, bool include_types) {
   return result;
 }
 
-string t_java_generator::async_argument_list(t_function* tfunct, t_struct* tstruct, string result_handler_symbol, bool include_types) {
+string t_java_generator::async_argument_list(
+    t_function* /*tfunct*/,
+    t_struct* tstruct,
+    string result_handler_symbol,
+    bool include_types) {
   string result = "";
   const vector<t_field*>& fields = tstruct->get_members();
   vector<t_field*>::const_iterator f_iter;

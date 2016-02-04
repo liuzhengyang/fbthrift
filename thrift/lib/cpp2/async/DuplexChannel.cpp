@@ -35,13 +35,14 @@ DuplexChannel::DuplexChannel(Who::WhoEnum who,
   : cpp2Channel_(new DuplexCpp2Channel(
                      *this, transport,
                      make_unique<DuplexFramingHandler>(*this),
-                     make_unique<DuplexProtectionHandler>(*this)),
-                 TDelayedDestruction::Destructor())
+                     make_unique<DuplexProtectionHandler>(*this),
+                     make_unique<DuplexSaslNegotiationHandler>(*this)),
+                 folly::DelayedDestruction::Destructor())
   , clientChannel_(new DuplexClientChannel(*this, cpp2Channel_),
-                   async::TDelayedDestruction::Destructor())
+                   folly::DelayedDestruction::Destructor())
   , clientFramingHandler_(*clientChannel_.get())
   , serverChannel_(new DuplexServerChannel(*this, cpp2Channel_),
-                   async::TDelayedDestruction::Destructor())
+                   folly::DelayedDestruction::Destructor())
   , serverFramingHandler_(*serverChannel_.get())
   , mainChannel_(who)
 {
@@ -137,7 +138,7 @@ DuplexChannel::DuplexFramingHandler::addFrame(
     }
   }
 
-  return std::move(buf);
+  return buf;
 }
 
 }} // apache::thrift

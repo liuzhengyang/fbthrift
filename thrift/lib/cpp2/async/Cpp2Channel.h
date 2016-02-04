@@ -22,9 +22,9 @@
 #include <thrift/lib/cpp2/async/SaslEndpoint.h>
 #include <thrift/lib/cpp2/async/MessageChannel.h>
 #include <thrift/lib/cpp2/async/TAsyncTransportHandler.h>
-#include <thrift/lib/cpp/async/TDelayedDestruction.h>
+#include <folly/io/async/DelayedDestruction.h>
 #include <thrift/lib/cpp/async/TAsyncTransport.h>
-#include <thrift/lib/cpp/async/TEventBase.h>
+#include <folly/io/async/EventBase.h>
 #include <thrift/lib/cpp/transport/THeader.h>
 #include <folly/io/IOBufQueue.h>
 #include <wangle/channel/Handler.h>
@@ -32,6 +32,7 @@
 #include <wangle/channel/OutputBufferingHandler.h>
 #include <thrift/lib/cpp2/async/FramingHandler.h>
 #include <thrift/lib/cpp2/async/ProtectionHandler.h>
+#include <thrift/lib/cpp2/async/SaslNegotiationHandler.h>
 #include <memory>
 
 #include <deque>
@@ -54,7 +55,8 @@ class Cpp2Channel
   explicit Cpp2Channel(
     const std::shared_ptr<apache::thrift::async::TAsyncTransport>& transport,
     std::unique_ptr<FramingHandler> framingHandler,
-    std::unique_ptr<ProtectionHandler> protectionHandler = nullptr);
+    std::unique_ptr<ProtectionHandler> protectionHandler = nullptr,
+    std::unique_ptr<SaslNegotiationHandler> saslNegotiationHandler = nullptr);
 
   // TODO(jsedgwick) This should be protected, but wangle::StaticPipeline
   // will encase this in a folly::Optional, which requires a public destructor.
@@ -62,15 +64,18 @@ class Cpp2Channel
   ~Cpp2Channel() override {}
 
   static std::unique_ptr<Cpp2Channel,
-                         apache::thrift::async::TDelayedDestruction::Destructor>
+                         folly::DelayedDestruction::Destructor>
   newChannel(
       const std::shared_ptr<apache::thrift::async::TAsyncTransport>& transport,
-      std::unique_ptr<FramingHandler> framingHandler) {
+      std::unique_ptr<FramingHandler> framingHandler,
+      std::unique_ptr<SaslNegotiationHandler> saslHandler = nullptr) {
     return std::unique_ptr<Cpp2Channel,
-      apache::thrift::async::TDelayedDestruction::Destructor>(
-      new Cpp2Channel(transport, std::move(framingHandler)));
+      folly::DelayedDestruction::Destructor>(
+      new Cpp2Channel(transport,
+                      std::move(framingHandler),
+                      nullptr,
+                      std::move(saslHandler)));
   }
-
   void closeNow();
 
   void setTransport(
@@ -82,7 +87,7 @@ class Cpp2Channel
     return transport_.get();
   }
 
-  // TDelayedDestruction methods
+  // DelayedDestruction methods
   void destroy() override;
 
   // BytesToBytesHandler methods
@@ -114,9 +119,9 @@ class Cpp2Channel
   void setReceiveCallback(RecvCallback* callback) override;
 
   // event base methods
-  virtual void attachEventBase(apache::thrift::async::TEventBase*);
+  virtual void attachEventBase(folly::EventBase*);
   virtual void detachEventBase();
-  apache::thrift::async::TEventBase* getEventBase();
+  folly::EventBase* getEventBase();
 
   // Queued sends feature - optimizes by minimizing syscalls in high-QPS
   // loads for greater throughput, but at the expense of some
@@ -147,6 +152,7 @@ private:
 
   std::shared_ptr<ProtectionHandler> protectionHandler_;
   std::shared_ptr<FramingHandler> framingHandler_;
+  std::shared_ptr<SaslNegotiationHandler> saslNegotiationHandler_;
 
   typedef wangle::StaticPipeline<
     folly::IOBufQueue&,
@@ -156,9 +162,10 @@ private:
     wangle::OutputBufferingHandler,
     ProtectionHandler,
     FramingHandler,
+    SaslNegotiationHandler,
     Cpp2Channel>
   Pipeline;
-  std::unique_ptr<Pipeline, folly::DelayedDestruction::Destructor> pipeline_;
+  std::shared_ptr<Pipeline> pipeline_;
   TAsyncTransportHandler* transportHandler_;
 };
 

@@ -424,14 +424,26 @@ void TFileTransport::writerThread() {
             offset_ = lseek(fd_, 0, SEEK_CUR);
             int32_t padding = (int32_t)((offset_ / chunkSize_ + 1) * chunkSize_ - offset_);
 
-            uint8_t zeros[padding];
-            bzero(zeros, padding);
-            if (-1 == ::write(fd_, zeros, padding)) {
-              int errno_copy = errno;
-              GlobalOutput.perror("TFileTransport: writerThread() error while padding zeros ", errno_copy);
-              hasIOError = true;
+            std::array<std::uint8_t, 64> zeroes{};
+
+            while (padding > 0) {
+              auto written = ::write(fd_, zeroes.data(),
+                std::min<size_t>(zeroes.size(), padding));
+              if (written < 0) {
+                int errno_copy = errno;
+                GlobalOutput.perror("TFileTransport: writerThread() error while padding zeros ", errno_copy);
+                hasIOError = true;
+                padding = -1;
+              } else {
+                assert(written <= padding);
+                padding -= written;
+              }
+            }
+
+            if (padding < 0) {
               continue;
             }
+
             unflushed += padding;
             offset_ += padding;
           }
@@ -910,7 +922,7 @@ void TFileTransport::getNextFlushTime(struct timespec* ts_next_flush) {
 }
 
 TFileTransportBuffer::TFileTransportBuffer(uint32_t size)
-  : bufferMode_(WRITE)
+  : bufferMode_(BUF_WRITE)
   , writePoint_(0)
   , readPoint_(0)
   , size_(size)
@@ -929,7 +941,7 @@ TFileTransportBuffer::~TFileTransportBuffer() {
 }
 
 bool TFileTransportBuffer::addEvent(eventInfo *event) {
-  if (bufferMode_ == READ) {
+  if (bufferMode_ == BUF_READ) {
     GlobalOutput("Trying to write to a buffer in read mode");
   }
   if (writePoint_ < size_) {
@@ -942,8 +954,8 @@ bool TFileTransportBuffer::addEvent(eventInfo *event) {
 }
 
 eventInfo* TFileTransportBuffer::getNext() {
-  if (bufferMode_ == WRITE) {
-    bufferMode_ = READ;
+  if (bufferMode_ == BUF_WRITE) {
+    bufferMode_ = BUF_READ;
   }
   if (readPoint_ < writePoint_) {
     return buffer_[readPoint_++];
@@ -954,14 +966,14 @@ eventInfo* TFileTransportBuffer::getNext() {
 }
 
 void TFileTransportBuffer::reset() {
-  if (bufferMode_ == WRITE || writePoint_ > readPoint_) {
+  if (bufferMode_ == BUF_WRITE || writePoint_ > readPoint_) {
     T_DEBUG("Resetting a buffer with unread entries");
   }
   // Clean up the old entries
   for (uint32_t i = 0; i < writePoint_; i++) {
     delete buffer_[i];
   }
-  bufferMode_ = WRITE;
+  bufferMode_ = BUF_WRITE;
   writePoint_ = 0;
   readPoint_ = 0;
 }

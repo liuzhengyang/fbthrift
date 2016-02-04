@@ -18,12 +18,14 @@
 #define THRIFT_ASYNC_CPP2CONNCONTEXT_H_ 1
 
 #include <thrift/lib/cpp/async/TAsyncSocket.h>
+#include <thrift/lib/cpp/async/TAsyncSSLSocket.h>
 #include <thrift/lib/cpp/server/TConnectionContext.h>
 #include <thrift/lib/cpp/concurrency/ThreadManager.h>
 #include <thrift/lib/cpp/transport/THeader.h>
 #include <thrift/lib/cpp2/async/SaslServer.h>
 
 #include <folly/SocketAddress.h>
+#include <wangle/ssl/SSLUtil.h>
 
 #include <memory>
 
@@ -40,7 +42,7 @@ class Cpp2ConnContext : public apache::thrift::server::TConnectionContext {
     const folly::SocketAddress* address = nullptr,
     const apache::thrift::async::TAsyncSocket* socket = nullptr,
     const apache::thrift::SaslServer* sasl_server = nullptr,
-    apache::thrift::async::TEventBaseManager* manager = nullptr,
+    folly::EventBaseManager* manager = nullptr,
     const std::shared_ptr<RequestChannel>& duplexChannel = nullptr)
     : saslServer_(sasl_server),
       manager_(manager),
@@ -51,6 +53,9 @@ class Cpp2ConnContext : public apache::thrift::server::TConnectionContext {
     }
     if (socket) {
       socket->getLocalAddress(&localAddress_);
+      if (auto sslSocket = dynamic_cast<const async::TAsyncSSLSocket*>(socket)) {
+        peerCert_ = sslSocket->getPeerCert();
+      }
     }
   }
 
@@ -74,8 +79,21 @@ class Cpp2ConnContext : public apache::thrift::server::TConnectionContext {
     return saslServer_;
   }
 
-  virtual apache::thrift::async::TEventBaseManager* getEventBaseManager() override {
+  virtual folly::EventBaseManager* getEventBaseManager() override {
     return manager_;
+  }
+
+  std::string getPeerCommonName() const {
+    if (peerCert_) {
+      if (auto cnPtr = wangle::SSLUtil::getCommonName(peerCert_.get())) {
+        return std::move(*cnPtr);
+      }
+    }
+    return std::string();
+  }
+
+  std::shared_ptr<X509> getPeerCertificate() const {
+    return peerCert_;
   }
 
   template <typename Client>
@@ -90,10 +108,11 @@ class Cpp2ConnContext : public apache::thrift::server::TConnectionContext {
   }
  private:
   const apache::thrift::SaslServer* saslServer_;
-  apache::thrift::async::TEventBaseManager* manager_;
+  folly::EventBaseManager* manager_;
   transport::THeader* requestHeader_;
   std::shared_ptr<RequestChannel> duplexChannel_;
   std::shared_ptr<TClientBase> duplexClient_;
+  std::shared_ptr<X509> peerCert_;
 };
 
 // Request-specific context
@@ -140,7 +159,7 @@ class Cpp2RequestContext : public apache::thrift::server::TConnectionContext {
     return header_->getWriteTransforms();
   }
 
-  apache::thrift::async::TEventBaseManager* getEventBaseManager() override {
+  folly::EventBaseManager* getEventBaseManager() override {
     return ctx_->getEventBaseManager();
   }
 
@@ -189,6 +208,30 @@ class Cpp2RequestContext : public apache::thrift::server::TConnectionContext {
     requestTimeout_ = requestTimeout;
   }
 
+  void setMethodName(std::string methodName) {
+    methodName_ = std::move(methodName);
+  }
+
+  const std::string& getMethodName() {
+    return methodName_;
+  }
+
+  void setProtoSeqId(int32_t protoSeqId) {
+    protoSeqId_ = protoSeqId;
+  }
+
+  int32_t getProtoSeqId() {
+    return protoSeqId_;
+  }
+
+  void setMessageBeginSize(uint32_t messageBeginSize) {
+    messageBeginSize_ = messageBeginSize;
+  }
+
+  uint32_t getMessageBeginSize() {
+    return messageBeginSize_;
+  }
+
  protected:
   static void no_op_destructor(void* /*ptr*/) {}
 
@@ -198,6 +241,10 @@ class Cpp2RequestContext : public apache::thrift::server::TConnectionContext {
   apache::thrift::transport::THeader* header_;
   bool startedProcessing_ = false;
   std::chrono::milliseconds requestTimeout_{0};
+  std::string methodName_;
+  int32_t protoSeqId_{0};
+  uint32_t messageBeginSize_{0};
+
 };
 
 } }

@@ -57,11 +57,21 @@ class TServerObserver {
 
   virtual void connDropped() {}
 
+  virtual void connRejected() {}
+
   virtual void saslError() {}
 
   virtual void saslFallBack() {}
 
   virtual void saslComplete() {}
+
+  virtual void tlsError() {}
+
+  virtual void tlsComplete() {}
+
+  virtual void tlsFallback() {}
+
+  virtual void tlsResumption() {}
 
   virtual void taskKilled() {}
 

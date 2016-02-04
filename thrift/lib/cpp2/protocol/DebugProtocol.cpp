@@ -26,7 +26,7 @@
 namespace apache { namespace thrift {
 
 DebugProtocolWriter::DebugProtocolWriter(
-    ExternalBufferSharing sharing) : out_(nullptr) { }
+    ExternalBufferSharing /*sharing*/) : out_(nullptr) { }
 
 namespace {
 
@@ -120,13 +120,14 @@ void DebugProtocolWriter::endItem() {
   }
 }
 
-void DebugProtocolWriter::setOutput(folly::IOBufQueue* out, size_t maxGrowth) {
+void DebugProtocolWriter::setOutput(folly::IOBufQueue* out,
+                                    size_t /*maxGrowth*/) {
   out_ = out;
 }
 
 uint32_t DebugProtocolWriter::writeMessageBegin(const std::string& name,
                                                 MessageType messageType,
-                                                int32_t seqid) {
+                                                int32_t /*seqid*/) {
   std::string mtype;
   switch (messageType) {
   case T_CALL:      mtype = "call";   break;
@@ -252,22 +253,148 @@ uint32_t DebugProtocolWriter::writeDouble(double v) {
   return 0;
 }
 
+uint32_t DebugProtocolWriter::writeString(folly::StringPiece str) {
+  return writeBinary(str);
+}
+
+uint32_t DebugProtocolWriter::writeBinary(folly::StringPiece str) {
+  return writeBinary(folly::ByteRange(str));
+}
+
+uint32_t DebugProtocolWriter::writeBinary(folly::ByteRange v) {
+  writeByteRange(v);
+  return 0;
+}
+
 uint32_t DebugProtocolWriter::writeBinary(
     const std::unique_ptr<folly::IOBuf>& str) {
-  writeSP(folly::StringPiece(str->clone()->coalesce()));
+  writeByteRange(folly::ByteRange(str->clone()->coalesce()));
   return 0;
 }
 
 uint32_t DebugProtocolWriter::writeBinary(
     const folly::IOBuf& str) {
-  writeSP(folly::StringPiece(str.clone()->coalesce()));
+  writeByteRange(folly::ByteRange(str.clone()->coalesce()));
   return 0;
 }
 
-void DebugProtocolWriter::writeSP(folly::StringPiece str) {
+uint32_t DebugProtocolWriter::serializedMessageSize(const std::string& name) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedFieldSize(const char* name,
+                                                  TType fieldName,
+                                                  int16_t fieldId) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedStructSize(const char* name) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeMapBegin(TType keyType,
+                                                     TType valType,
+                                                     uint32_t size) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeMapEnd() {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeListBegin(TType elemType,
+                                                      uint32_t size) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeListEnd() {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeSetBegin(TType elemType,
+                                                     uint32_t size) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeSetEnd() {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeStop() {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeBool(bool value) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeByte(int8_t byte) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeI16(int16_t i16) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeI32(int32_t i32) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeI64(int64_t i64) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeDouble(double dub) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeFloat(float flt) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeString(folly::StringPiece str) {
+  return serializedSizeBinary(str);
+}
+
+uint32_t DebugProtocolWriter::serializedSizeBinary(folly::StringPiece str) {
+  return serializedSizeBinary(folly::ByteRange(str));
+}
+
+uint32_t DebugProtocolWriter::serializedSizeBinary(folly::ByteRange) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeBinary(
+    const std::unique_ptr<folly::IOBuf>&) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeBinary(const folly::IOBuf&) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeZCBinary(folly::StringPiece str) {
+  return serializedSizeBinary(folly::ByteRange(str));
+}
+
+uint32_t DebugProtocolWriter::serializedSizeZCBinary(folly::ByteRange) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeZCBinary(
+    const std::unique_ptr<folly::IOBuf>&) {
+  return 0;
+}
+
+uint32_t DebugProtocolWriter::serializedSizeZCBinary(const folly::IOBuf&) {
+  return 0;
+}
+
+void DebugProtocolWriter::writeByteRange(folly::ByteRange v) {
   static constexpr size_t kStringLimit = 256;
   static constexpr size_t kStringPrefixSize = 128;
 
+  auto str = folly::StringPiece(v);
   std::string toShow = str.str();
   if (toShow.length() > kStringLimit) {
     toShow = str.subpiece(0, kStringPrefixSize).str();

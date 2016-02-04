@@ -151,6 +151,7 @@ T& maybe_remove_pointer(T* x) { return *x; }
 
 FOLLY_CREATE_HAS_MEMBER_FN_TRAITS(push_back_checker, push_back);
 FOLLY_CREATE_HAS_MEMBER_FN_TRAITS(insert_checker, insert);
+FOLLY_CREATE_HAS_MEMBER_FN_TRAITS(op_bracket_checker, operator[]);
 FOLLY_CREATE_HAS_MEMBER_FN_TRAITS(reserve_checker, reserve);
 
 // The std::vector<bool> specialization in gcc provides a push_back(bool)
@@ -159,6 +160,14 @@ template <class C>
 using is_vector_like = std::integral_constant<bool,
     push_back_checker<C, void(typename C::value_type&&)>::value ||
     push_back_checker<C, void(typename C::value_type)>::value>;
+
+template <class C>
+using op_bracket_of_key_signature =
+    typename C::mapped_type&(const typename C::key_type&);
+
+template <class C>
+using has_op_bracket_of_key = std::integral_constant<bool,
+      op_bracket_checker<C, op_bracket_of_key_signature<C>>::value>;
 
 template <class C>
 using has_insert = insert_checker<C,
@@ -170,9 +179,7 @@ using is_set_like = std::integral_constant<bool,
       std::is_same<typename C::key_type, typename C::value_type>::value>;
 
 template <class C>
-using is_map_like = std::integral_constant<bool,
-      has_insert<C>::value &&
-      !std::is_same<typename C::key_type, typename C::value_type>::value>;
+using is_map_like = has_op_bracket_of_key<C>;
 
 template <class T, class = void>
 struct Reserver {
@@ -866,7 +873,7 @@ struct helper {
       const std::string& msg,
       std::unique_ptr<ResponseChannel::Request> req,
       Cpp2RequestContext* ctx,
-      async::TEventBase* eb,
+      folly::EventBase* eb,
       int32_t protoSeqId);
 
 };
@@ -892,7 +899,7 @@ process_missing(
     std::unique_ptr<ResponseChannel::Request> req,
     std::unique_ptr<folly::IOBuf> buf,
     Cpp2RequestContext* ctx,
-    async::TEventBase* eb,
+    folly::EventBase* eb,
     concurrency::ThreadManager* tm,
     int32_t protoSeqId) {
   using h = helper_r<ProtocolReader>;
@@ -909,13 +916,20 @@ process_missing(
     std::unique_ptr<ResponseChannel::Request> req,
     std::unique_ptr<folly::IOBuf> buf,
     Cpp2RequestContext* ctx,
-    async::TEventBase* eb,
+    folly::EventBase* eb,
     concurrency::ThreadManager* tm,
     int32_t /*protoSeqId*/) {
   auto protType = ProtocolReader::protocolType();
   processor->Processor::BaseAsyncProcessor::process(
       std::move(req), std::move(buf), protType, ctx, eb, tm);
 }
+
+bool deserializeMessageBegin(
+    protocol::PROTOCOL_TYPES protType,
+    std::unique_ptr<ResponseChannel::Request>& req,
+    folly::IOBuf* buf,
+    Cpp2RequestContext* ctx,
+    folly::EventBase* eb);
 
 template <class ProtocolReader, class Processor>
 void process_pmap(
@@ -926,33 +940,25 @@ void process_pmap(
     std::unique_ptr<ResponseChannel::Request> req,
     std::unique_ptr<folly::IOBuf> buf,
     Cpp2RequestContext* ctx,
-    async::TEventBase* eb,
+    folly::EventBase* eb,
     concurrency::ThreadManager* tm) {
-  using h = helper_r<ProtocolReader>;
-  const char* fn = "process";
-  std::string fname;
-  MessageType mtype;
-  int32_t protoSeqId = 0;
-  auto iprot = folly::make_unique<ProtocolReader>();
-  iprot->setInput(buf.get());
-  try {
-    iprot->readMessageBegin(fname, mtype, protoSeqId);
-  } catch (const TException& ex) {
-    LOG(ERROR) << "received invalid message from client: " << ex.what();
-    const char* msg = "invalid message from client";
-    return h::process_exn(fn, msg, std::move(req), ctx, eb, protoSeqId);
-  }
-  if (mtype != T_CALL && mtype != T_ONEWAY) {
-    LOG(ERROR) << "received invalid message of type " << mtype;
-    const char* msg = "invalid message arguments";
-    return h::process_exn(fn, msg, std::move(req), ctx, eb, protoSeqId);
-  }
+  const auto& fname = ctx->getMethodName();
   auto pfn = pmap.find(fname);
   if (pfn == pmap.end()) {
-    process_missing<ProtocolReader>(
-        proc, fname, std::move(req), std::move(buf), ctx, eb, tm, protoSeqId);
+    process_missing<ProtocolReader>(proc, fname, std::move(req),
+        std::move(buf), ctx, eb, tm, ctx->getProtoSeqId());
     return;
   }
+
+  auto iprot = folly::make_unique<ProtocolReader>();
+  auto trim = ctx->getMessageBeginSize();
+  while (trim >= buf->length()) {
+    trim -= buf->length();
+    buf = buf->pop();
+    DCHECK(buf);
+  }
+  buf->trimStart(trim);
+  iprot->setInput(buf.get());
   (proc->*(pfn->second))(
       std::move(req), std::move(buf), std::move(iprot), ctx, eb, tm);
 }
@@ -965,7 +971,7 @@ void process(
     std::unique_ptr<folly::IOBuf> buf,
     protocol::PROTOCOL_TYPES protType,
     Cpp2RequestContext* ctx,
-    async::TEventBase* eb,
+    folly::EventBase* eb,
     concurrency::ThreadManager* tm) {
   switch (protType) {
     case protocol::T_BINARY_PROTOCOL: {
@@ -1071,11 +1077,22 @@ future_exn(std::exception_ptr ex) {
   return folly::makeFuture<R>(folly::exception_wrapper(std::move(ex)));
 }
 
+template <class R, class E>
+folly::Future<R>
+future_exn(std::exception_ptr ex, E& e) {
+  return folly::makeFuture<R>(folly::exception_wrapper(std::move(ex), e));
+}
+
 template <class F>
 ret<F>
 future_catching(F&& f) {
-  try { return f(); }
-  catch(...) { return future_exn<fut_ret<F>>(std::current_exception()); }
+  try {
+    return f();
+  } catch (const std::exception& e) {
+    return future_exn<fut_ret<F>>(std::current_exception(), e);
+  } catch(...) {
+    return future_exn<fut_ret<F>>(std::current_exception());
+  }
 }
 
 using CallbackBase = HandlerCallbackBase;
